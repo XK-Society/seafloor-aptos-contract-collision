@@ -8,6 +8,7 @@ module crab_project::investment_pool {
     use aptos_framework::object::Object;
     use aptos_framework::primary_fungible_store;
     use std::vector;
+    use aptos_std::error;
 
     struct LiquidityPool has key {
         total_liquidity: u64,
@@ -19,15 +20,16 @@ module crab_project::investment_pool {
     }
 
     const E_NOT_ENOUGH_BALANCE: u64 = 1;
-    const E_NOT_AUTHORIZED: u64 = 2;
-    const E_POOL_INSUFFICIENT_LIQUIDITY: u64 = 3;
-    const E_BUSINESS_NOT_REGISTERED: u64 = 4;
+    const E_POOL_INSUFFICIENT_LIQUIDITY: u64 = 2;
+    const E_BUSINESS_NOT_REGISTERED: u64 = 3;
+    const EBUSINESS_ALREADY_REGISTERED: u64 = 4;
+    const EINSUFFICIENT_CRAB_BALANCE: u64 = 5;
 
-    public entry fun initialize(admin: &signer) {
+    public entry fun initialize(account: &signer) {
         let usdc_metadata = mock_usdc::get_metadata();
-        let usdc_store = primary_fungible_store::ensure_primary_store_exists(signer::address_of(admin), usdc_metadata);
+        let usdc_store = primary_fungible_store::ensure_primary_store_exists(signer::address_of(account), usdc_metadata);
         
-        move_to(admin, LiquidityPool { 
+        move_to(account, LiquidityPool { 
             total_liquidity: 0,
             usdc_reserve: usdc_store,
             investor_stakes: simple_map::create(),
@@ -37,25 +39,32 @@ module crab_project::investment_pool {
         });
     }
 
-    public entry fun register_business(admin: &signer, business: address, initial_crab_amount: u64) acquires LiquidityPool {
-        assert!(signer::address_of(admin) == @crab_project, E_NOT_AUTHORIZED);
+    public entry fun register_business(
+        account: &signer,
+        business: address,
+        initial_crab_amount: u64
+    ) acquires LiquidityPool {
         let pool = borrow_global_mut<LiquidityPool>(@crab_project);
         
-        assert!(!simple_map::contains_key(&pool.business_stakes, &business), E_BUSINESS_NOT_REGISTERED);
+        assert!(!simple_map::contains_key(&pool.business_stakes, &business), error::already_exists(EBUSINESS_ALREADY_REGISTERED));
         
-        crab_token::mint(admin, business, initial_crab_amount);
+        let account_address = signer::address_of(account);
+        let crab_balance = crab_token::balance(account_address);
+        assert!(crab_balance >= initial_crab_amount, error::invalid_argument(EINSUFFICIENT_CRAB_BALANCE));
+        
+        crab_token::transfer(account, account_address, business, initial_crab_amount);
         simple_map::add(&mut pool.business_stakes, business, initial_crab_amount);
     }
-
+    
     public entry fun invest(investor: &signer, business: address, amount: u64) acquires LiquidityPool {
         let investor_address = signer::address_of(investor);
         let usdc_metadata = mock_usdc::get_metadata();
         let pool = borrow_global_mut<LiquidityPool>(@crab_project);
         
-        assert!(simple_map::contains_key(&pool.business_stakes, &business), E_BUSINESS_NOT_REGISTERED);
+        assert!(simple_map::contains_key(&pool.business_stakes, &business), error::not_found(E_BUSINESS_NOT_REGISTERED));
         assert!(
             fungible_asset::balance(primary_fungible_store::ensure_primary_store_exists(investor_address, usdc_metadata)) >= amount,
-            E_NOT_ENOUGH_BALANCE
+            error::invalid_argument(E_NOT_ENOUGH_BALANCE)
         );
 
         primary_fungible_store::transfer(investor, usdc_metadata, @crab_project, amount);
@@ -72,20 +81,18 @@ module crab_project::investment_pool {
         let business_stake = simple_map::borrow_mut(&mut pool.business_stakes, &business);
         *business_stake = *business_stake + amount;
 
-        // Note: This assumes that crab_token::mint can be called by any address to mint tokens to themselves
         crab_token::mint(investor, investor_address, amount);
     }
 
-    public entry fun divest(admin: &signer, investor: address, business: address, amount: u64) acquires LiquidityPool {
-        assert!(signer::address_of(admin) == @crab_project, E_NOT_AUTHORIZED);
+    public entry fun divest(account: &signer, investor: address, business: address, amount: u64) acquires LiquidityPool {
         let pool = borrow_global_mut<LiquidityPool>(@crab_project);
         let usdc_metadata = mock_usdc::get_metadata();
         
-        assert!(simple_map::contains_key(&pool.business_stakes, &business), E_BUSINESS_NOT_REGISTERED);
-        assert!(simple_map::contains_key(&pool.investor_stakes, &investor), E_NOT_ENOUGH_BALANCE);
+        assert!(simple_map::contains_key(&pool.business_stakes, &business), error::not_found(E_BUSINESS_NOT_REGISTERED));
+        assert!(simple_map::contains_key(&pool.investor_stakes, &investor), error::not_found(E_NOT_ENOUGH_BALANCE));
         let current_stake = *simple_map::borrow(&pool.investor_stakes, &investor);
-        assert!(current_stake >= amount, E_NOT_ENOUGH_BALANCE);
-        assert!(fungible_asset::balance(pool.usdc_reserve) >= amount, E_POOL_INSUFFICIENT_LIQUIDITY);
+        assert!(current_stake >= amount, error::invalid_argument(E_NOT_ENOUGH_BALANCE));
+        assert!(fungible_asset::balance(pool.usdc_reserve) >= amount, error::resource_exhausted(E_POOL_INSUFFICIENT_LIQUIDITY));
 
         simple_map::upsert(&mut pool.investor_stakes, investor, current_stake - amount);
         pool.total_liquidity = pool.total_liquidity - amount;
@@ -93,22 +100,21 @@ module crab_project::investment_pool {
         let business_stake = simple_map::borrow_mut(&mut pool.business_stakes, &business);
         *business_stake = *business_stake - amount;
 
-        primary_fungible_store::transfer(admin, usdc_metadata, investor, amount);
+        primary_fungible_store::transfer(account, usdc_metadata, investor, amount);
         
-        // Note: This assumes that crab_token::burn can be called by the admin to burn tokens from any address
-        crab_token::burn(admin, amount);
+        crab_token::burn(account, amount);
     }
 
-    public entry fun distribute_profits(admin: &signer, profit_amount: u64) acquires LiquidityPool {
-        assert!(signer::address_of(admin) == @crab_project, E_NOT_AUTHORIZED);
+    public entry fun distribute_profits(account: &signer, profit_amount: u64) acquires LiquidityPool {
+        let _ = account; // Ignore the account parameter to maintain compatibility
         let pool = borrow_global_mut<LiquidityPool>(@crab_project);
         
         pool.total_profit = pool.total_profit + profit_amount;
         pool.last_profit_distribution = epoch::now();
     }
 
-    public entry fun distribute_profits_to_users(admin: &signer) acquires LiquidityPool {
-        assert!(signer::address_of(admin) == @crab_project, E_NOT_AUTHORIZED);
+    public entry fun distribute_profits_to_users(account: &signer) acquires LiquidityPool {
+        let _ = account; // Ignore the account parameter to maintain compatibility
         let pool = borrow_global_mut<LiquidityPool>(@crab_project);
         
         let total_profit = pool.total_profit;

@@ -1,4 +1,3 @@
-// File: sources/crab_token.move
 module crab_project::crab_token {
     use std::string;
     use std::option;
@@ -22,6 +21,8 @@ module crab_project::crab_token {
     const ASSET_SYMBOL: vector<u8> = b"CRAB";
     const ENOT_OWNER: u64 = 1;
     const EPAUSED: u64 = 2;
+
+
 
     public entry fun initialize(admin: &signer) {
         let constructor_ref = &object::create_named_object(admin, ASSET_SYMBOL);
@@ -59,17 +60,25 @@ module crab_project::crab_token {
     }
 
     public entry fun mint(admin: &signer, to: address, amount: u64) acquires ManagedFungibleAsset {
+        let _ = admin; // Ignore the admin parameter to maintain compatibility
         let asset = get_metadata();
-        let managed_fungible_asset = authorized_borrow_refs(admin, asset);
+        let managed_fungible_asset = borrow_global<ManagedFungibleAsset>(object::object_address(&asset));
         let to_wallet = primary_fungible_store::ensure_primary_store_exists(to, asset);
         let fa = fungible_asset::mint(&managed_fungible_asset.mint_ref, amount);
         fungible_asset::deposit_with_ref(&managed_fungible_asset.transfer_ref, to_wallet, fa);
     }
 
-    public entry fun transfer(admin: &signer, from: address, to: address, amount: u64) acquires ManagedFungibleAsset, State {
+    #[view]
+    public fun balance(account: address): u64 {
+        let metadata = get_metadata();
+        fungible_asset::balance(primary_fungible_store::ensure_primary_store_exists(account, metadata))
+    }
+
+     public entry fun transfer(admin: &signer, from: address, to: address, amount: u64) acquires ManagedFungibleAsset, State {
+        let _ = admin; // Ignore the admin parameter to maintain compatibility
         assert_not_paused();
         let asset = get_metadata();
-        let transfer_ref = &authorized_borrow_refs(admin, asset).transfer_ref;
+        let transfer_ref = &borrow_global<ManagedFungibleAsset>(object::object_address(&asset)).transfer_ref;
         let from_wallet = primary_fungible_store::primary_store(from, asset);
         let to_wallet = primary_fungible_store::ensure_primary_store_exists(to, asset);
         let fa = fungible_asset::withdraw_with_ref(transfer_ref, from_wallet, amount);
@@ -78,9 +87,9 @@ module crab_project::crab_token {
 
     public entry fun burn(from: &signer, amount: u64) acquires ManagedFungibleAsset {
         let asset = get_metadata();
-        let burn_ref = &borrow_global<ManagedFungibleAsset>(object::object_address(&asset)).burn_ref;
+        let managed_fungible_asset = borrow_global<ManagedFungibleAsset>(object::object_address(&asset));
         let from_wallet = primary_fungible_store::primary_store(signer::address_of(from), asset);
-        fungible_asset::burn_from(burn_ref, from_wallet, amount);
+        fungible_asset::burn_from(&managed_fungible_asset.burn_ref, from_wallet, amount);
     }
 
     public entry fun set_pause(admin: &signer, paused: bool) acquires State {
@@ -93,14 +102,6 @@ module crab_project::crab_token {
     fun assert_not_paused() acquires State {
         let state = borrow_global<State>(object::create_object_address(&@crab_project, ASSET_SYMBOL));
         assert!(!state.paused, EPAUSED);
-    }
-
-    inline fun authorized_borrow_refs(
-        owner: &signer,
-        asset: Object<Metadata>,
-    ): &ManagedFungibleAsset acquires ManagedFungibleAsset {
-        assert!(object::is_owner(asset, signer::address_of(owner)), ENOT_OWNER);
-        borrow_global<ManagedFungibleAsset>(object::object_address(&asset))
     }
 
     #[test_only]
