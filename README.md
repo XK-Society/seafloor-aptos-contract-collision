@@ -5,7 +5,7 @@
 The seafloor smart contract is a decentralized investment platform that allows businesses to tokenize their assets and investors to invest in these businesses using USDC. The platform uses CRAB tokens to represent investments and manages a liquidity pool for handling transactions.
 
 ## Transaction Explorer: View Contract on Aptos Explorer
-https://explorer.aptoslabs.com/txn/0xd1375e447a3442e8d816ed490453d089f7b34c14bc6ec9660c98f62a109abd9c/userTxnOverview?network=devnet
+(https://explorer.aptoslabs.com/account/0x18b9dccee7eb6726b6688b91a7c9e7e66c6ed3c33755e34f220d97dd1504c6e4?network=devnet)
 
 ## Contract Structure
 
